@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Farm Monitoring Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-slate-100 text-slate-800 font-sans p-4 md:p-8">
+
+    <div class="max-w-6xl mx-auto">
+        <h1 class="text-4xl font-bold text-green-700 mb-2">Live Farm Conditions</h1>
+        <p class="text-slate-500 mb-8" id="last-updated">Waiting for data...</p>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+            
+            <div class="bg-white rounded-xl shadow-md p-5 border-t-4 border-orange-500">
+                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Atmo Temp</h2>
+                <div class="mt-2 flex items-baseline">
+                    <span id="val-atmo-temp" class="text-3xl font-extrabold text-slate-800">--</span>
+                    <span class="ml-1 text-lg font-medium text-slate-500">°C</span>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-md p-5 border-t-4 border-blue-400">
+                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Humidity</h2>
+                <div class="mt-2 flex items-baseline">
+                    <span id="val-humidity" class="text-3xl font-extrabold text-slate-800">--</span>
+                    <span class="ml-1 text-lg font-medium text-slate-500">%</span>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-md p-5 border-t-4 border-amber-600">
+                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Soil Temp</h2>
+                <div class="mt-2 flex items-baseline">
+                    <span id="val-soil-temp" class="text-3xl font-extrabold text-slate-800">--</span>
+                    <span class="ml-1 text-lg font-medium text-slate-500">°C</span>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-md p-5 border-t-4 border-blue-700">
+                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Soil Moisture</h2>
+                <div class="mt-2 flex items-baseline">
+                    <span id="val-moisture" class="text-3xl font-extrabold text-slate-800">--</span>
+                    <span class="ml-1 text-lg font-medium text-slate-500">%</span>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-md p-5 border-t-4 border-yellow-400">
+                <h2 class="text-xs font-bold text-slate-400 uppercase tracking-wider">Light Level</h2>
+                <div class="mt-2 flex items-baseline">
+                    <span id="val-light" class="text-3xl font-extrabold text-slate-800">--</span>
+                    <span class="ml-1 text-lg font-medium text-slate-500">Lux</span>
+                </div>
+            </div>
+
+        </div>
+
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <h2 class="text-lg font-semibold text-slate-600 mb-4">Recent Trends (Last 20 Updates)</h2>
+            <div class="relative h-80 w-full">
+                <canvas id="historyChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-app.js";
+        import { getDatabase, ref, query, orderByChild, limitToLast, onValue } from "https://www.gstatic.com/firebasejs/10.10.0/firebase-database.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyD8n35uS3jYU6TC-6eZDRvHhZsdBEBUY7Q",
+            databaseURL: "https://farming-platform-default-rtdb.asia-southeast1.firebasedatabase.app"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+
+        // --- CHART SETUP ---
+        let chartLabels = [];
+        let datasetAtmoTemp = [];
+        let datasetHumidity = [];
+        let datasetSoilTemp = [];
+        let datasetMoisture = [];
+        let datasetLight = [];
+
+        const ctx = document.getElementById('historyChart').getContext('2d');
+        const historyChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: chartLabels,
+                datasets: [
+                    { label: 'Atmo Temp (°C)', data: datasetAtmoTemp, borderColor: '#f97316', tension: 0.3 },
+                    { label: 'Humidity (%)', data: datasetHumidity, borderColor: '#60a5fa', tension: 0.3 },
+                    { label: 'Soil Temp (°C)', data: datasetSoilTemp, borderColor: '#d97706', tension: 0.3 },
+                    { label: 'Moisture (%)', data: datasetMoisture, borderColor: '#1d4ed8', tension: 0.3 },
+                    { label: 'Light (Lux)', data: datasetLight, borderColor: '#facc15', tension: 0.3 }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false }
+        });
+
+        // --- FIREBASE DATA QUERY ---
+        const updateDisplay = document.getElementById('last-updated');
+        
+        // Ask Firebase ONLY for the last 20 entries sorted by time
+        const historyQuery = query(ref(db, 'farm_history'), orderByChild('timestamp'), limitToLast(20));
+
+        onValue(historyQuery, (snapshot) => {
+            // Clear the old arrays before pushing new data
+            chartLabels.length = 0;
+            datasetAtmoTemp.length = 0;
+            datasetHumidity.length = 0;
+            datasetSoilTemp.length = 0;
+            datasetMoisture.length = 0;
+            datasetLight.length = 0;
+
+            let latestData = null;
+            let latestTime = "";
+
+            snapshot.forEach((childSnapshot) => {
+                const data = childSnapshot.val();
+                latestData = data; 
+                
+                // Format the timestamp if it exists, otherwise use a fallback
+                let timeString = "Unknown Time";
+                if(data.timestamp) {
+                    timeString = new Date(data.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                }
+                latestTime = timeString;
+
+                chartLabels.push(timeString);
+                datasetAtmoTemp.push(data.atmo_temp !== undefined ? data.atmo_temp : 0);
+                datasetHumidity.push(data.humidity !== undefined ? data.humidity : 0);
+                datasetSoilTemp.push(data.soil_temp !== undefined ? data.soil_temp :
